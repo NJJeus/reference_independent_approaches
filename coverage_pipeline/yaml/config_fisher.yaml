@@ -1,0 +1,10 @@
+FOLDER_NUMS: [0]
+THRESHOLDS: 0
+BEFORE_FILE: "../../fisher_files/before_test.txt"
+AFTER_FILE: "../../fisher_files/after_test.txt"
+OUTPUT_DIR: "../../results"
+BLAST_FILE: "../../fisher_files/table-blast_for_fisher.txt"
+# Rule to define all expected outputs
+FILTER_FILE: "../../fisher_files/before_after_test.txt"
+MERGED_FILE: "../../assemblies/all_samples_merged.fa"
+COVERAGE_MATRIX: "../../results/coverage_matrix_corrected_snake_simulated_test.tsv"

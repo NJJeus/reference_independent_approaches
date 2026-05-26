@@ -1,0 +1,23 @@
+
+#timepoint1_cleaned:  "../../fastq_cleaned/datasets_1_5"
+timepoint1_cleaned: "../../fastq_cleaned/datasets_1_100"
+#timepoint2_cleaned: "../../fastq_cleaned/datasets_2_5_l1_circovirus"
+timepoint2_cleaned: "../../fastq_cleaned/datasets_2_100_l40"
+#timepoint1_cleaned: "../../fastq_cleaned/test1_coli"
+#timepoint2_cleaned: "../../fastq_cleaned/test2_coli"
+reference: "../../references/giant_virus_1.fa"
+  #reference: "../../references/circovirus.fa"
+blast_files: "../../tmp/blast_100_l40/*.txt"
+blast_table: "../../fisher_files/blast_100_l40/BLASTN_RESULTS.csv"
+blast_table_edited: "../../fisher_files/blast_100_l40/BLASTN_RESULTS_EDITED.txt"
+blast_table_end: "../../fisher_files/blast_100_l40/table-blast_for_fisher.txt"
+result_matrix: "../../results/100_l40/coverage_matrix_corrected_snake_simulated_100_l40.tsv"
+ids: "../../fisher_files/blast_100_l40/output_id_blast.txt"
+folder_nums:
+  - 0
+thresholds: [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]
+  #before_file: "../../fisher_files/before.txt"
+  #after_file: "../../fisher_files/after.txt"
+output_dir: "../../results/100_l40"
+  #filter_file: "../../fisher_files/before_after_test.txt"
+  #merged_file: "../../assemblies/all_samples_merged.fa"

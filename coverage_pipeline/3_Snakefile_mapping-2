@@ -1,0 +1,370 @@
+#IMPORT OS
+import sys
+import glob
+configfile: "yaml/config_megahit.yaml" 
+out_dir = '../../tmp'
+import os
+import shutil
+import glob
+import time
+start_time = time.process_time()
+timepoint1_cleaned = config["timepoint1_cleaned"]
+timepoint2_cleaned = config["timepoint2_cleaned"]
+os.makedirs("../../tmp/reference-contigs_100_l40",exist_ok=True)
+os.makedirs("../../tmp/blast_100_l40",exist_ok=True)
+os.makedirs("../../tmp/mapping-sa_100_l40",exist_ok=True)
+os.makedirs("../../tmp/coverage_100_l40",exist_ok = True)
+os.makedirs('../../fisher_files/blast_100_l40',exist_ok = True)
+FASTQ_DIR_a = timepoint2_cleaned
+FASTQ_DIR_b = timepoint1_cleaned
+# discover samples dynamically from existing files (looks for *_1.fastq.gz)
+OUTPUT = config['output_dir']
+import re
+
+a_files = [f for f in os.listdir(FASTQ_DIR_a) if f.endswith("_1.fastq.gz")]
+b_files = [f for f in os.listdir(FASTQ_DIR_b) if f.endswith("_1.fastq.gz")]
+
+
+def get_sample_name(filename):
+    name = re.sub(r'(-cleaned)?_1\.fastq.gz$', '', filename.strip())
+    return name
+
+a_samples_valid = sorted([get_sample_name(f) for f in a_files])
+b_samples_valid = sorted([get_sample_name(f) for f in b_files])
+names = a_samples_valid + b_samples_valid
+
+print("Discovered A samples:", a_samples_valid)
+print("Discovered B samples:", b_samples_valid)
+rule all:
+    input:
+        # files from assembly
+        expand(os.path.join(out_dir, "megahit_100_l40", "{sample}", "final.contigs.fa"), sample=a_samples_valid),
+        expand("../../ASSEMBLIES/DSII_100_L40/{sample}.fa", sample=a_samples_valid),
+        "../../ASSEMBLIES/DSII_100_L40/all_samples_merged.fa",
+
+        # BLAST results
+        expand(os.path.join(out_dir, "blast_100_l40", "{sample}.txt"), sample=a_samples_valid),
+        config["blast_table"],
+        config["blast_table_edited"],
+        config["ids"],
+        config["blast_table_end"],
+        
+        # Reference contigs
+        expand(os.path.join(out_dir, "reference-contigs_100_l40", "{sample}.fa"), sample=a_samples_valid),
+        
+        # Mapping and coverage
+        expand(out_dir+"/mapping-sa_100_l40/merged-{read}.bam", read=names),
+        expand(out_dir+"/coverage_100_l40/merged-{read}.txt", read=names),
+        config["result_matrix"],
+        out_dir + "/srr_ids_before_100_l40.txt",
+        out_dir + "/srr_ids_after_100_l40.txt",
+        # Fisher test
+        expand(
+            f"{OUTPUT}/threshold_{{threshold}}.done",
+            threshold=config['thresholds']
+        ), 
+        out_dir + "/coverage_100_l40/failed_samples.txt",
+        out_dir + "/coverage_100_l40/raw_matrix.tsv"
+
+rule copy_contigs:
+    input:
+        out_dir + '/megahit_100_l40/{sample}/final.contigs.fa'
+    output:
+        '../../ASSEMBLIES/DSII_100_L40/{sample}.fa'
+    benchmark:
+        os.path.join(out_dir, "logs_100_l40", "copy_contigs_{sample}_benchmark.txt")
+    shell:
+        "cp {input} {output}"
+rule merge_long_contigs:
+    input:
+        expand("../../ASSEMBLIES/DSII_100_L40/{sample}.fa", sample=a_samples_valid)
+    output:
+        "../../ASSEMBLIES/DSII_100_L40/all_samples_merged.fa"
+    benchmark:
+        os.path.join(out_dir, "logs_100_l40", "merge_long_contigs_benchmark.txt")
+    conda:
+        "yaml/seqkit.yaml"
+    shell:
+    	r"""
+    	> {output}  
+    	for f in {input}; do
+        	prefix=$(basename "$f" .fa)
+        	seqkit replace -p '^' -r "${{prefix}}_" "$f" >> {output} #add prefix (sample name) to each id  #add then to merged file
+    	done
+    	"""
+rule blast:
+    input:
+        c = '../../ASSEMBLIES/DSII_100_L40/{sample}.fa',
+        s = config["reference"]
+    output:
+        out_dir + '/blast_100_l40/{sample}.txt'
+    #priority: 10
+    benchmark:
+        os.path.join(out_dir, "logs_100_l40", "blast_{sample}_benchmark.txt")
+    log:
+        out_dir + '/logs/blast_100_l40/{sample}.log'
+    conda:
+        "yaml/blast.yaml"  
+    shell:
+        """
+        mkdir -p $(dirname {output}) $(dirname {log})
+        blastn -query {input.c} -subject {input.s} \
+            -out {output} \
+            -outfmt '6 std qlen qcovs' 2>> {log}
+        
+        echo "BLAST completed successfully for {wildcards.sample}" >> {log}
+        """
+rule filter_blast_and_create_list:
+    input:
+        blast_files = expand(out_dir + "/blast_100_l40/{sample}.txt", sample=a_samples_valid)
+    output:
+        blast_table = config["blast_table"],
+        all_blast = config["blast_table_edited"]
+    benchmark:
+        os.path.join(out_dir, "logs_100_l40", "filter_blast_benchmark.txt")
+    #priority: 5
+    run:
+        import pandas as pd
+        from pathlib import Path
+
+        all_rows = []
+        for file_path in input.blast_files:
+            sample_name = Path(file_path).stem
+            try:
+                df = pd.read_csv(file_path, sep=r'\s+', header=None)
+            except pd.errors.EmptyDataError:
+                print(f"[warning] File {file_path} is empty — skipping.")
+                continue
+
+            df_filtered = df[(df.iloc[:, 13] > 80) & (df.iloc[:, 12] >= 2000) & (df.iloc[:, 2] > 95)].copy()
+            if df_filtered.empty:
+                print(f"[info] No valid hits in {file_path} after filtering — skipping.")
+                continue
+            df_filtered.insert(0, "sample_file", sample_name + ".txt")
+            all_rows.append(df_filtered)
+        if not all_rows:
+            print("[info] No BLAST results across all files — writing empty outputs.")
+            pd.DataFrame().to_csv(output.blast_table, sep="\t", index=False, header=False)
+            pd.DataFrame().to_csv(output.all_blast, index=False, header=False)
+            return
+        merged = pd.concat(all_rows, ignore_index=True)
+        merged.drop_duplicates(subset=[1, 0], inplace=True)
+        merged.to_csv(output.blast_table, sep="\t", header=False, index=False)
+        merged['combined'] = merged['sample_file'].str.replace('.txt', '', regex=False) + '_' + merged.iloc[:, 1].astype(str)
+        merged['combined'].to_csv(output.all_blast, index=False, header=False)
+
+rule extract_id:
+    input:
+        "../../ASSEMBLIES/DSII_100_L40/all_samples_merged.fa"
+    output:
+        config["ids"]
+    benchmark:
+        os.path.join(out_dir, "logs_100_l40", "extract_id_benchmark.txt")
+    run:
+        with open(input[0]) as fin, open(output[0], "w") as fout:
+            for line in fin:
+                if line.startswith(">"):
+                    header = line.strip()
+                    id = header.split()[0][1:]
+                    fout.write(id + "\n")
+                    
+
+rule intersect_ids:
+    input:
+        ids=config["ids"],
+        blast=config["blast_table_edited"]
+    output:
+        config["blast_table_end"]
+    #benchmark:
+     #   os.path.join(out_dir, "logs_100_l40", "intersect_ids_benchmark.txt")
+    run:
+        with open(input.ids) as f:
+            contigs = [line.strip() for line in f]
+        with open(input.blast) as f:
+            blast_set = set(line.strip() for line in f)
+        with open(output[0], "w") as fout:
+            fout.write("contigs\treference_presence\n")
+            for c in contigs:
+                reference_flag = "1" if c in blast_set else "0"
+                fout.write(f"{c}\t{reference_flag}\n")
+#Creating file with reference blast contigs
+rule seqtk: 
+    input:
+        c = '../../ASSEMBLIES/DSII_100_L40/{sample}.fa',
+        b = out_dir + '/blast_100_l40/{sample}.txt'
+    output:
+        out_dir + '/reference-contigs_100_l40/{sample}.fa'
+   # benchmark:
+    #    os.path.join(out_dir, "logs_100_l40", "seqtk_{sample}_benchmark.txt")
+    log:
+        out_dir + '/logs/seqtk/{sample}.log'
+    run:
+        import os
+        import subprocess
+        
+        os.makedirs(os.path.dirname(output[0]), exist_ok=True)
+        if input.b and os.path.getsize(input.b) > 0:
+            cmd = f"awk '{{ print $1 }}' {input.b} | sort -u | seqtk subseq {input.c} - > {output[0]}"
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            
+        else:
+            with open(output[0], 'w') as f:
+                pass
+
+
+
+
+rule map_with_sa:
+    input:
+        c = "../../ASSEMBLIES/DSII_100_L40/all_samples_merged.fa",
+        r1 = lambda wildcards: os.path.join(
+            FASTQ_DIR_a if wildcards.read in a_samples_valid else FASTQ_DIR_b,
+            f"{wildcards.read}-cleaned_1.fastq.gz"
+        ),
+        r2 = lambda wildcards: os.path.join(
+            FASTQ_DIR_a if wildcards.read in a_samples_valid else FASTQ_DIR_b,
+            f"{wildcards.read}-cleaned_2.fastq.gz"
+        ),
+    output:
+        out_dir + "/mapping-sa_100_l40/merged-{read}.bam"
+    #benchmark:
+     #   os.path.join(out_dir, "logs_100_l40", "map_with_sa_{read}_benchmark.txt")
+    log:
+        out_dir + "/strobealign-logs/merged-{read}.log"
+    params:
+        out_dir = out_dir,
+    conda:
+        "yaml/strobealign.yaml"
+    run:
+    	import os
+    	import sys
+    	sample = wildcards.read
+    	out_dir = params.out_dir
+    	bam_out = output[0]
+    
+    	os.makedirs(os.path.dirname(bam_out), exist_ok=True)
+    	os.makedirs(os.path.dirname(log[0]), exist_ok=True)  # Изменено здесь
+    
+    	shell(f"""
+        strobealign -t 1 -v {input.c} {input.r1} {input.r2} 2>> {log[0]} | \
+        samtools view -h -F 4 2>> {log[0]} | \
+        samtools sort -o {bam_out} 2>> {log[0]}
+        echo "Completed successfully" >> {log[0]}
+    	""")
+
+rule coverage_and_matrix:
+    input:
+        bams=expand(out_dir + "/mapping-sa_100_l40/merged-{read}.bam", read=names),
+        assemblies=expand("../../ASSEMBLIES/DSII_100_L40/{sample}.fa", sample=a_samples_valid)
+    output:
+        coverage=expand(out_dir + "/coverage_100_l40/merged-{read}.txt",  read=names),
+        matrix=out_dir + "/coverage_100_l40/raw_matrix.tsv",
+        failed_log=out_dir + "/coverage_100_l40/failed_samples.txt"
+    #benchmark:
+     #   os.path.join(out_dir, "logs_100_l40", "coverage_and_matrix_benchmark.txt")
+    conda:
+        "yaml/strobealign.yaml"
+    params:
+        coverage_dir=out_dir + "/coverage_100_l40",
+        assemblies_dir="../../ASSEMBLIES/DSII_100_L40"
+    shell:
+        r"""
+        mkdir -p {params.coverage_dir}
+        
+        # Initialize the failed_samples.txt file (create empty file)
+        touch {output.failed_log}
+
+        for bam in {input.bams}; do
+            sample=$(basename "$bam" .bam)
+            output_file="{params.coverage_dir}/${{sample}}.txt"
+
+            if ! samtools coverage "$bam" -o "$output_file" 2>/dev/null; then #if samtools coverage command with error
+                echo "$sample" >> {output.failed_log}
+                continue
+            fi
+        done
+
+        python ../../scripts/matrix_snake2.py {params.coverage_dir} {output.matrix}
+        """
+
+rule fix_failed_samples_in_matrix:
+    input:
+        matrix=out_dir + "/coverage_100_l40/raw_matrix.tsv",
+        failed_log=out_dir + "/coverage_100_l40/failed_samples.txt"
+    output:
+        matrix=config["result_matrix"]
+    #benchmark:
+    #    os.path.join(out_dir, "logs_100_l40", "failed_samples_benchmark.txt")
+    run:
+        import pandas as pd
+        from pathlib import Path
+
+        matrix_file = Path(input.matrix)
+        failed_log = Path(input.failed_log)
+        output_file = Path(output.matrix)
+
+        df = pd.read_csv(matrix_file, sep='\t')
+
+        if failed_log.exists():
+            failed = [line.strip() for line in failed_log.open() if line.strip()]
+            contig_col = df.columns[0]
+
+            for f in failed:
+                if f in df.columns:
+                    df[f] = 0
+
+        df.to_csv(output_file, sep='\t', index=False)
+
+rule make_sample_names:
+    output:
+        before = out_dir + "/srr_ids_before_100_l40.txt",
+        after = out_dir + "/srr_ids_after_100_l40.txt",
+        filter = out_dir + "/srr_ids_before_after_100_l40.txt"
+    params:
+        dir_before = FASTQ_DIR_b,  # timepoint1_cleaned
+        dir_after = FASTQ_DIR_a    # timepoint2_cleaned
+    #benchmark:
+     #   os.path.join(out_dir, "logs_100_l40", "make_sample_names_benchmark.txt")
+    shell:
+        """
+        # Before timepoint (timepoint1)
+        ls {params.dir_before}/*-cleaned_1.fastq.gz 2>/dev/null | \
+        xargs -n1 basename | cut -d'-' -f1 | sort -u > {output.before} 
+        # After timepoint (timepoint2)
+        ls {params.dir_after}/*-cleaned_1.fastq.gz 2>/dev/null | \
+        xargs -n1 basename | cut -d'-' -f1 | sort -u > {output.after}
+        cat {output.before} {output.after} > {output.filter}
+        """
+rule run_coverage_fisher:
+    input:
+        before=rules.make_sample_names.output.before,
+        after=rules.make_sample_names.output.after,
+        filter=rules.make_sample_names.output.filter,
+        matrix=config["result_matrix"],  
+        blast=config["blast_table_end"]  
+    output:
+        done=f"{OUTPUT}/threshold_{{threshold}}.done"
+    #benchmark:
+     #   os.path.join(out_dir, "logs_100_l40", "run_coverage_fisher_{threshold}_benchmark.txt")
+    params:
+        threshold="{threshold}",
+        output_dir=OUTPUT,
+        merged_file="../../ASSEMBLIES/DSII_100_L40/all_samples_merged.fa"
+    log:
+        f"{OUTPUT}/logs/threshold_{{threshold}}.log"
+    shell:
+        """
+        python ../../scripts/coverage_fisher_snake.py \
+            {params.threshold} \
+            {input.before} \
+            {input.after} \
+            {params.output_dir} \
+            {input.matrix} \
+            {input.blast} \
+            {input.filter} \
+            {params.merged_file}
+        > {log} 2>&1 && touch {output.done}
+        """
+
+
+

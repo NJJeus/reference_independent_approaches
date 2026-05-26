@@ -1,0 +1,9 @@
+timepoint1: "../../fastq/datasets_1_160"
+timepoint2: "../../fastq_with_simulated_reads/datasets_2_160_l20"
+timepoint1_cleaned: "../../fastq_cleaned/datasets_1_160"
+timepoint2_cleaned: "../../fastq_cleaned/datasets_2_100_l20_20thr"
+
+#timepoint1: "/mnt/SAN96/SIMULATION/FINAL/TEST_FILES/TEST_INPUT/FASTQ/ecoli_reads"
+#tiяamepoint2: "/mnt/SAN96/SIMULATION/FINAL/TEST_FILES/TEST_INPUT/FASTQ/ecoli_circovirus_reads"
+#timepoint1_cleaned: "../../fastq_cleaned/test1_coli"
+#timepoint2_cleaned: "../../fastq_cleaned/test2_coli"

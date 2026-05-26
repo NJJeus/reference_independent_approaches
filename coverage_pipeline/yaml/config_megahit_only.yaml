@@ -1,0 +1,10 @@
+
+#timepoint1_cleaned:  "../../fastq_cleaned/datasets_1_5"
+timepoint1_cleaned: "../../fastq_cleaned/datasets_1_200"
+#timepoint2_cleaned: "../../fastq_cleaned/datasets_2_5_l1_circovirus"
+timepoint2_cleaned: "../../fastq_cleaned/datasets_2_200_l20"
+#timepoint1_cleaned: "../../fastq_cleaned/test1_coli"
+#timepoint2_cleaned: "../../fastq_cleaned/test2_coli"
+reference: "../../references/giant_virus_1.fa"
+  #reference: "../../references/circovirus.fa"
+

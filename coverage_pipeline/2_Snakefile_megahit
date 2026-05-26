@@ -1,0 +1,77 @@
+configfile: "yaml/config_megahit.yaml"
+
+import os
+import shutil
+import time
+from datetime import datetime
+
+# Configuration
+out_dir = '../../tmp'
+
+# Record start time at module level
+start_time = time.process_time()
+# Create output directories
+directories = [
+    'megahit_100_l20',
+    'megahit-logs',
+]
+
+#for dir_name in directories:
+ #   full_path = os.path.join(out_dir, dir_name)
+ #   if os.path.exists(full_path):
+ #       shutil.rmtree(full_path)
+ #       print(f"Removed directory: {full_path}")
+#    os.makedirs(full_path, exist_ok=True)
+#    print(f"Created directory: {full_path}")
+
+# Get input directory from config
+timepoint2_cleaned = config["timepoint2_cleaned"]
+FASTQ_DIR_a = timepoint2_cleaned
+
+# Discover samples dynamically
+a_files = [f for f in os.listdir(FASTQ_DIR_a) if f.endswith("_1.fastq.gz")]
+a_samples_valid = sorted([f.replace("-cleaned_1.fastq.gz", "") for f in a_files])
+print(f"Discovered {len(a_samples_valid)} samples:", a_samples_valid)
+
+# Define all target outputs
+rule all:
+    input:
+        expand(os.path.join(out_dir, "megahit_100_l20", "{sample}", "final.contigs.fa"), 
+               sample=a_samples_valid)
+
+
+
+
+rule megahit_paired_a:
+    input:
+        r1 = os.path.join(FASTQ_DIR_a, "{sample}-cleaned_1.fastq.gz"),
+        r2 = os.path.join(FASTQ_DIR_a, "{sample}-cleaned_2.fastq.gz")
+    output:
+        os.path.join(out_dir, "megahit_100_l20", "{sample}", "final.contigs.fa")
+    params:
+        outdir = lambda wildcards: os.path.join(out_dir, "megahit_100_l20", wildcards.sample)
+    log:
+        os.path.join(out_dir, "megahit-logs", "{sample}_timing.log")
+    threads: 10
+    resources: 
+        megahit_jobs=1
+    conda: 
+        "yaml/megahit.yaml"
+    shell:
+        r"""
+        tmpdir={params.outdir}.megahit_tmp
+        rm -rf "$tmpdir"
+        
+        megahit -1 {input.r1} -2 {input.r2} \
+            --min-contig-len 1000 \
+            --min-count 2 \
+            --k-list 21,41,61,81,99 \
+            -t {threads} \
+            -o "$tmpdir"
+        
+        mkdir -p {params.outdir}
+        mv "$tmpdir/final.contigs.fa" {output}
+        rm -rf "$tmpdir"
+        """
+
+

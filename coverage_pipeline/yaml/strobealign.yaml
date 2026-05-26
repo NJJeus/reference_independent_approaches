@@ -1,0 +1,6 @@
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - strobealign=0.16.0
+  - samtools=1.21

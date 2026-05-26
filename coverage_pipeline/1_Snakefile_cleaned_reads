@@ -1,0 +1,80 @@
+import os
+import sys
+import glob
+import shutil
+import time
+
+configfile: "yaml/config_cleaned.yaml"
+timepoint1 = config["timepoint1"]
+timepoint2 = config["timepoint2"]
+timepoint1_cleaned = config["timepoint1_cleaned"]
+timepoint2_cleaned = config["timepoint2_cleaned"]
+
+patterns = [
+    f'{timepoint1}/*cleaned*',
+    f'{timepoint2}/*cleaned*'
+]
+for pattern in patterns:
+    for file_path in glob.glob(pattern):
+        try:
+            os.remove(file_path)
+            print(f"File deleted: {file_path}")
+        except Exception as e:
+            print(f"Error deleting {file_path}: {e}")
+
+FASTQ_DIR_a = timepoint1
+FASTQ_DIR_b = timepoint2
+FASTQ_DIR_a_cleaned = timepoint1_cleaned
+FASTQ_DIR_b_cleaned = timepoint2_cleaned
+
+a_files = [f for f in os.listdir(FASTQ_DIR_a) if f.endswith("_1.fastq.gz")]
+b_files = [f for f in os.listdir(FASTQ_DIR_b) if f.endswith("_1.fastq.gz")]
+
+a_samples_valid = sorted([f.replace("_1.fastq.gz", "") for f in a_files])
+b_samples_valid = sorted([f.replace("_1.fastq.gz", "") for f in b_files])
+
+sample_to_dirs = {}
+for sample in a_samples_valid:
+    sample_to_dirs[sample] = (FASTQ_DIR_a, FASTQ_DIR_a_cleaned)
+for sample in b_samples_valid:
+    sample_to_dirs[sample] = (FASTQ_DIR_b, FASTQ_DIR_b_cleaned)
+
+names = a_samples_valid + b_samples_valid
+print("Discovered A samples:", a_samples_valid)
+print("Discovered B samples:", b_samples_valid)
+
+def get_input_dir(wildcards):
+    return sample_to_dirs[wildcards.sample][0]
+
+def get_output_dir(wildcards):
+    return sample_to_dirs[wildcards.sample][1]
+
+rule all:
+    input:
+        expand(os.path.join(FASTQ_DIR_b_cleaned, "{sample}-cleaned_1.fastq.gz"), sample=b_samples_valid),
+        expand(os.path.join(FASTQ_DIR_b_cleaned, "{sample}-cleaned_2.fastq.gz"), sample=b_samples_valid),
+        expand(os.path.join(FASTQ_DIR_a_cleaned, "{sample}-cleaned_1.fastq.gz"), sample=a_samples_valid),
+        expand(os.path.join(FASTQ_DIR_a_cleaned, "{sample}-cleaned_2.fastq.gz"), sample=a_samples_valid)
+
+rule fastp:
+    input:
+        r1=lambda wildcards: os.path.join(sample_to_dirs[wildcards.sample][0], f"{wildcards.sample}_1.fastq.gz"),
+        r2=lambda wildcards: os.path.join(sample_to_dirs[wildcards.sample][0], f"{wildcards.sample}_2.fastq.gz")
+    output:
+        r1="{outdir}/{sample}-cleaned_1.fastq.gz",
+        r2="{outdir}/{sample}-cleaned_2.fastq.gz"
+    params:
+        outdir=lambda wildcards: sample_to_dirs[wildcards.sample][1]
+    wildcard_constraints:
+        sample="|".join(names),
+        outdir=".*"
+    shell:
+        """
+        fastp -i {input.r1} -I {input.r2} -o {output.r1} -O {output.r2} \
+        --unqualified_percent_limit 70 --n_base_limit 0  --qualified_quality_phred 25 \
+        --detect_adapter_for_pe \
+        --json /dev/null \
+        --html /dev/null
+        """
+
+
