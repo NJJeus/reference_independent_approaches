@@ -1,0 +1,6 @@
+name: dsk
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - dsk=2.3.3
